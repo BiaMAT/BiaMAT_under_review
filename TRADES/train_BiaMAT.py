@@ -45,7 +45,7 @@ parser.add_argument('--step-size', default=0.007,
                     help='perturb step size')
 parser.add_argument('--beta', default=6.0,
                     help='regularization, i.e., 1/lambda in TRADES')
-parser.add_argument('--alpha', type=float, default=1.0,
+parser.add_argument('--alpha', type=float, default=0.5,
                     help='a hyperparameter for BiaMAT')
 parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
@@ -57,7 +57,7 @@ parser.add_argument('--data-dir', type=str, default='data',
                     help='directory of model for saving checkpoint')
 parser.add_argument('--save-freq', '-s', default=1, type=int, metavar='N',
                     help='save frequency')
-parser.add_argument('--aug-dataset-dir', default='Imagenet32_train')
+parser.add_argument('--aux-dataset-dir', default='Imagenet32_train')
 parser.add_argument('--load-model-dir',
                    help='directory of model for saving checkpoint')
 parser.add_argument('--load-epoch', type=int, default=0, metavar='N',
@@ -113,7 +113,7 @@ train_filenames = ['train_data_batch_{}'.format(ii + 1) for ii in range(10)]
 x_list = []
 y_list = []
 for ii, fname in enumerate(train_filenames):
-    cur_images, cur_labels = _load_datafile(os.path.join(args.aug_dataset_dir, fname))
+    cur_images, cur_labels = _load_datafile(os.path.join(args.aux_dataset_dir, fname))
     x_list.append(cur_images)
     y_list.append(cur_labels)
 data_imagenet = np.concatenate(x_list, axis=0)
