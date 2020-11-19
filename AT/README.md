@@ -1,9 +1,11 @@
 # Biased Multi-domain Adversarial Training
 
-This repository is the official implementation of Biased Multi-domain Adversarial Training. 
+This repository is the official implementation of Biased Multi-domain Adversarial Training.
+The implementation is based on (https://github.com/MadryLab/cifar10_challenge).
 
 ## Prerequisites
 
+* Python 3
 * Tensorflow (1.13)
 * Numpy
 * CUDA
