@@ -1,6 +1,6 @@
 # Biased Multi-domain Adversarial Training
 
-This repository is the official implementation of [Biased Multi-domain Adversarial Training]. 
+This repository is the official implementation of Biased Multi-domain Adversarial Training (BiaMAT).
 
 ## Auxiliary dataset
 
