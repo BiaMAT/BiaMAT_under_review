@@ -71,7 +71,7 @@ class WideResNet(nn.Module):
         self.bn1 = nn.BatchNorm2d(nChannels[3])
         self.relu = nn.ReLU(inplace=True)
         self.fc = nn.Linear(nChannels[3], num_classes)
-        self.fc_aux = nn.Linear(nChannels[3], num_classes_aug).cuda()
+        self.fc_multihead = nn.Linear(nChannels[3], num_classes_aug).cuda()
         self.nChannels = nChannels[3]
 
         for m in self.modules():
@@ -109,5 +109,5 @@ class WideResNet(nn.Module):
         out_default = self.fc(out[:split[0]])
         out_aux = None
 
-        out_aux = self.fc_aux(out[split[0]:])
+        out_aux = self.fc_multihead(out[split[0]:])
         return out_default, out_aux
