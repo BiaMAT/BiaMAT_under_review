@@ -1,6 +1,6 @@
 # Biased Multi-domain Adversarial Training
 
-This repository is the official implementation of Biased Multi-domain Adversarial Training (BiaMAT).
+This repository is the official implementation of Biased Multi-domain Adversarial Training (BiaMAT).  
 The implementation is based on the official code of TRADES (https://github.com/yaodongyu/TRADES).
 
 ## Prerequisites
