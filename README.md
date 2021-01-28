@@ -5,6 +5,10 @@ This repository is the official implementation of Biased Multi-domain Adversaria
 ## Auxiliary dataset
 
 Please download ImageNet32x32 (http://image-net.org/download-images).
+Places365 (http://places2.csail.mit.edu/download.html)
+CIFAR100 (https://www.cs.toronto.edu/~kriz/cifar.html)
+SVHN (http://ufldl.stanford.edu/housenumbers/)
+
 
 ## Pre-trained Models
 
