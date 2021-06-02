@@ -48,13 +48,12 @@ class NetworkBlock(nn.Module):
 
 
 class WideResNet(nn.Module):
-    def __init__(self, depth=34, num_classes=10, num_classes_aug=1000, num_head=1, widen_factor=10, dropRate=0.0):
+    def __init__(self, depth=34, num_classes=10, num_classes_aug=1000, widen_factor=10, dropRate=0.0):
         super(WideResNet, self).__init__()
         nChannels = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor]
         assert ((depth - 4) % 6 == 0)
         n = (depth - 4) / 6
         self.num_classes_aug = num_classes_aug
-        self.num_head = num_head
         block = BasicBlock
         # 1st conv before any network block
         self.conv1 = nn.Conv2d(3, nChannels[0], kernel_size=3, stride=1,
@@ -85,7 +84,7 @@ class WideResNet(nn.Module):
                 m.bias.data.zero_()
 
         print('WideResNet BiaMAT')
-        print('num head : ', self.num_head, 'num_classes_aug : ', self.num_classes_aug)
+        print('num_classes_aug : ', self.num_classes_aug)
 
     def forward(self, x):
         out = self.conv1(x)

@@ -30,16 +30,7 @@ class LinfPGDAttack:
       correct_logit = tf.reduce_sum(label_mask * model.pre_softmax, axis=1)
       wrong_logit = tf.reduce_max((1-label_mask) * model.pre_softmax - 1e4*label_mask, axis=1)
       loss = -tf.nn.relu(correct_logit - wrong_logit + 50)
-    elif loss_func == 'cw_old':
-      label_mask = tf.one_hot(model.y_input,
-                              10,
-                              on_value=1.0,
-                              off_value=0.0,
-                              dtype=tf.float32)
-      correct_logit = tf.reduce_sum(label_mask * model.pre_softmax, axis=1)
-      wrong_logit = tf.reduce_max((1-label_mask) * model.pre_softmax - 1e4*label_mask, axis=1)
-      loss = -tf.nn.relu(correct_logit - wrong_logit + 50)
-    elif loss_func == 'ssv_train':
+    elif loss_func == 'merge':
       loss = model.xent_merge
     else:
       print('Unknown loss function. Defaulting to cross-entropy')
@@ -47,7 +38,7 @@ class LinfPGDAttack:
 
     self.grad = tf.gradients(loss, model.x_input)[0]
 
-  def perturb(self, x_nat, y, sess, alpha, is_training):
+  def perturb(self, x_nat, y, sess, scaler, is_training):
     """Given a set of examples (x_nat, y), returns a set of adversarial
        examples within epsilon of x_nat in l_infinity norm."""
     if self.rand:
@@ -59,8 +50,31 @@ class LinfPGDAttack:
     for i in range(self.num_steps):
       grad = sess.run(self.grad, feed_dict={self.model.x_input: x,
                                             self.model.is_training: is_training,
-                                            self.model.alpha: alpha,
+                                            self.model.scaler: scaler,
                                             self.model.y_input: y})
+
+      x = np.add(x, self.step_size * np.sign(grad), out=x, casting='unsafe')
+
+      x = np.clip(x, x_nat - self.epsilon, x_nat + self.epsilon)
+      x = np.clip(x, 0, 255) # ensure valid pixel range
+
+    return x
+
+  def perturb_pri_and_aux(self, x_nat, y, y_aux, sess, is_training):
+    """Given a set of examples (x_nat, y), returns a set of adversarial
+       examples within epsilon of x_nat in l_infinity norm."""
+    if self.rand:
+      x = x_nat + np.random.uniform(-self.epsilon, self.epsilon, x_nat.shape)
+      x = np.clip(x, 0, 255) # ensure valid pixel range
+    else:
+      x = np.copy(x_nat)
+
+    for i in range(self.num_steps):
+      grad = sess.run(self.grad, feed_dict={self.model.x_input: x,
+                                            self.model.is_training: is_training,
+                                            self.model.y_input: y,
+                                            self.model.num_aux_in: len(y_aux),
+                                            self.model.y_input_aux: y_aux})
 
       x = np.add(x, self.step_size * np.sign(grad), out=x, casting='unsafe')
 

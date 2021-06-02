@@ -10,16 +10,15 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 import numpy as np
 
-# from models.wideresnet import *
 from models.wideresnet_BiaMAT import *
 from dataset import *
 from trades import *
 import time
 import pickle
 
-import matplotlib.pyplot as plt
-
 parser = argparse.ArgumentParser(description='PyTorch CIFAR TRADES Adversarial Training')
+parser.add_argument('--primary', type=str, default='cifar10',
+                    choices=('cifar10'))
 parser.add_argument('--batch-size', type=int, default=128, metavar='N',
                     help='input batch size for training (default: 128)')
 parser.add_argument('--test-batch-size', type=int, default=128, metavar='N',
@@ -39,13 +38,17 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
 parser.add_argument('--epsilon', default=0.031,
                     help='perturbation')
-parser.add_argument('--num-steps', default=10,
+parser.add_argument('--num-steps', type=int, default=10,
                     help='perturb number of steps')
 parser.add_argument('--step-size', default=0.007,
                     help='perturb step size')
 parser.add_argument('--beta', default=6.0,
                     help='regularization, i.e., 1/lambda in TRADES')
 parser.add_argument('--alpha', type=float, default=0.5,
+                    help='a hyperparameter for BiaMAT')
+parser.add_argument('--gamma', type=float, default=0.5,
+                    help='a hyperparameter for BiaMAT')
+parser.add_argument('--warmup', type=int, default=5,
                     help='a hyperparameter for BiaMAT')
 parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
@@ -85,47 +88,25 @@ transform_test = transforms.Compose([
     transforms.ToTensor(),
 ])
 
-trainset = torchvision.datasets.CIFAR10(root=args.data_dir, train=True, download=True, transform=transform_train)
+'''''''''
+Loading primary dataset
+'''''''''
+if args.primary == 'cifar10':
+    num_classes=10
+    trainset = torchvision.datasets.CIFAR10(root=args.data_dir, train=True, download=True, transform=transform_train)
+    testset = torchvision.datasets.CIFAR10(root=args.data_dir, train=False, download=True, transform=transform_test)
+
 train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, **kwargs)
-testset = torchvision.datasets.CIFAR10(root=args.data_dir, train=False, download=True, transform=transform_test)
 test_loader = torch.utils.data.DataLoader(testset, batch_size=args.test_batch_size, shuffle=True, **kwargs)
-
-def unpickle(file):
-    with open(file, 'rb') as fo:
-        dict = pickle.load(fo)
-    return dict
-
-def _load_datafile(data_file, img_size=32):
-    d = unpickle(data_file)
-    x = d['data']
-    y = d['labels']
-    # Labels are indexed from 1, shift it so that indexes start at 0
-    y = [i-1 for i in y]
-    data_size = x.shape[0]
-    img_size2 = img_size * img_size
-    x = np.dstack((x[:, :img_size2], x[:, img_size2:2*img_size2], x[:, 2*img_size2:]))
-    x = x.reshape((x.shape[0], img_size, img_size, 3))
-    y = np.array(y)
-    assert x.dtype == np.uint8
-    return x, y
-
-train_filenames = ['train_data_batch_{}'.format(ii + 1) for ii in range(10)]
-x_list = []
-y_list = []
-for ii, fname in enumerate(train_filenames):
-    cur_images, cur_labels = _load_datafile(os.path.join(args.aux_dataset_dir, fname))
-    x_list.append(cur_images)
-    y_list.append(cur_labels)
-data_imagenet = np.concatenate(x_list, axis=0)
-label_imagenet = np.concatenate(y_list, axis=0)
-
-print('dataset size : ', data_imagenet.shape, label_imagenet.shape)
-print('dataset min, max : ', np.min(data_imagenet), np.max(data_imagenet)) # 0 255
-print('label min, max : ', np.min(label_imagenet), np.max(label_imagenet)) # 0 999
-print("aug param : ", args.alpha)
-
-n_class_aux = 1000
-cur_trainset = ImageNet32(data_imagenet, label_imagenet, transform_train) # 0, 125
+'''''''''
+Loading auxiliary dataset
+'''''''''
+aux_dataset = Load_dataset(args.aux_dataset_dir)
+print('dataset size : ', aux_dataset.image.shape, aux_dataset.label.shape)
+print('dataset min, max : ', np.min(aux_dataset.image), np.max(aux_dataset.image)) # 0 255
+print('label min, max : ', np.min(aux_dataset.label), np.max(aux_dataset.label)) # 0 999
+print("alpha : %f, gamma: %f"%(args.alpha, args.gamma))
+cur_trainset = Auxiliary(aux_dataset.image, aux_dataset.label, transform_train) # 0, 125
 train_loader_aug = torch.utils.data.DataLoader(cur_trainset, batch_size=args.batch_size, shuffle=True, **kwargs)
 
 def train(args, model, device, train_loader, optimizer, epoch):
@@ -154,41 +135,105 @@ def train(args, model, device, train_loader, optimizer, epoch):
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                        100. * batch_idx / len(train_loader), loss.item()))
 
-def train_BiaMAT(args, model, device, train_loader, train_loader_aug, aug_iterator, optimizer, epoch):
+def biamat_gate(data, data_aux, target, target_aux, model, warmup, threshold):
+    data_concat = torch.cat((data, data_aux), dim=0)
+    if warmup:
+        return data_concat, target, None, target_aux, [len(target), 0, len(target_aux)], threshold , 0.
+    model.eval()
+    if threshold == 0:
+        logits = model(data_concat)
+        confidences, _ = torch.max(F.softmax(logits.detach(), dim=1).detach(), dim=1)
+        mean_confi_pri = torch.mean(confidences[:len(target)].detach())
+        confi_aux = confidences[len(target):].detach()
+        mean_confi_aux = torch.mean(confi_aux)
+        threshold = mean_confi_pri*args.gamma
+        mask = confi_aux < threshold
+    else:
+        logits = model(data_aux)
+        confidences, _ = torch.max(F.softmax(logits.detach(), dim=1).detach(), dim=1)
+        mean_confi_aux = torch.mean(confidences)
+        mask = confidences < threshold
+    num_out = torch.sum(mask.long())
+    if num_out == len(mask):
+        target_random = torch.ones(len(target_aux), num_classes)*(1./num_classes)
+        return data_concat, target, target_random.cuda(), None, [len(target), len(target_random), 0], threshold, mean_confi_aux
+    elif num_out == 0:
+        return data_concat, target, None, target_aux, [len(target), 0, len(target_aux)], threshold, mean_confi_aux
+    else:
+        data_aux_out = data_aux[mask].detach()
+        data_aux_in = data_aux[~mask].detach()
+        data_aux_reorder = torch.cat([data_aux_out, data_aux_in], dim=0)
+        data_concat[-len(target_aux):] = data_aux_reorder.detach()
+        target_random = torch.ones(num_out, num_classes)*(1./num_classes)
+        target_aux = target_aux[~mask]
+        return data_concat, target, target_random.cuda(), target_aux, [len(target), len(target_random), len(target_aux)], threshold, mean_confi_aux
 
+def train_BiaMAT(args, model, device, train_loader, train_loader_aug, aug_iterator, optimizer, epoch, warmup, threshold):
     model.train()
+    biamat=0
     for batch_idx, (data, target) in enumerate(train_loader):
         try:
             data_aug, target_aug = next(aug_iterator)
         except StopIteration:
             aug_iterator = iter(train_loader_aug)
             data_aug, target_aug = next(aug_iterator)
-        split = [len(data), len(data_aug)]
-        data, target = torch.cat((data, data_aug), dim=0), torch.cat((target, target_aug), dim=0)
-        data, target = data.to(device), target.to(device)
+        data, target, target_random, target_aux, split, threshold, mean_confi_aux = biamat_gate(data.to(device), data_aug.to(device), target.to(device), target_aug.to(device), model, warmup, threshold)
         optimizer.zero_grad()
         # calculate robust loss
-        loss, loss_aux = trades_loss_BiaMAT(model=model,
-                           x_natural=data,
-                           y=target,
-                           split=split,
-                           n_class_aux=n_class_aux,
-                           optimizer=optimizer,
-                           step_size=args.step_size,
-                           epsilon=args.epsilon,
-                           perturb_steps=args.num_steps,
-                           beta=args.beta,
-                           alpha=args.alpha
-                          )
+        if split[1] == 0:
+            loss, loss_aux = trades_loss_BiaMAT_naive(model=model,
+                               x_natural=data,
+                               y=target,
+                               y_aux=target_aux,
+                               split=[split[0], split[2]],
+                               optimizer=optimizer,
+                               step_size=args.step_size,
+                               epsilon=args.epsilon,
+                               perturb_steps=args.num_steps,
+                               beta=args.beta,
+                               alpha=args.alpha
+                              )
+            loss_aux_out = torch.tensor(0)
+            loss_aux_in = torch.tensor(0)
+        elif split[2] == 0:
+            loss = trades_loss_aux_out(model=model,
+                               x_natural=data,
+                               y=target,
+                               y_random=target_random,
+                               split=split[:2],
+                               optimizer=optimizer,
+                               step_size=args.step_size,
+                               epsilon=args.epsilon,
+                               perturb_steps=args.num_steps,
+                               beta=args.beta,
+                               alpha=args.alpha
+                              )
+            loss_aux = 0
+        else:
+            loss, loss_aux, loss_aux_out, loss_aux_in = trades_loss_BiaMAT(model=model,
+                               x_natural=data,
+                               y=target,
+                               y_random=target_random,
+                               y_aux=target_aux,
+                               split=split,
+                               optimizer=optimizer,
+                               step_size=args.step_size,
+                               epsilon=args.epsilon,
+                               perturb_steps=args.num_steps,
+                               beta=args.beta,
+                               alpha=args.alpha
+                              )
         loss.backward()
+        biamat += split[2] / sum(split[1:])
         optimizer.step()
 
         # print progress
         if batch_idx % args.log_interval == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, Loss Multihead: {:.6f}'.format(
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, Loss Auxiliary: {:.6f}, loss_aux_out: {:.6f} ,loss_aux_in: {:.6f}\tbiamat ratio: {:.6f}, mean_confi_aux: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
-                       100. * batch_idx / len(train_loader), loss.item(), loss_aux.item()))
-    return aug_iterator
+                       100. * batch_idx / len(train_loader), loss.item(), loss_aux.item(), loss_aux_out.item(), loss_aux_in.item(), biamat / args.log_interval, mean_confi_aux))
+            biamat = 0
+    return aug_iterator, threshold
 
 def eval_train(model, device, train_loader):
     model.eval()
@@ -249,7 +294,7 @@ def adjust_learning_rate(optimizer, epoch):
 
 def main():
     # init model
-    model = WideResNet().to(device)
+    model = WideResNet(num_classes=num_classes, num_classes_aug=aux_dataset.num_classes).to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
     if args.load_epoch != 0:
@@ -262,6 +307,8 @@ def main():
     init_time = time.time()
 
     aug_iterator = iter(train_loader_aug)
+    warmup = True
+    threshold = 0
     for epoch in range(args.load_epoch + 1, args.epochs + 1):
         # adjust learning rate for SGD
         adjust_learning_rate(optimizer, epoch)
@@ -269,7 +316,9 @@ def main():
         # adversarial training
         elapsed_time = time.time() - init_time
         print('elapsed time : %d h %d m %d s' % (elapsed_time / 3600, (elapsed_time % 3600) / 60, (elapsed_time % 60)))
-        aug_iterator = train_BiaMAT(args, model, device, train_loader, train_loader_aug, aug_iterator, optimizer, epoch)
+        if epoch >= args.warmup+1:
+            warmup = False
+        aug_iterator, threshold = train_BiaMAT(args, model, device, train_loader, train_loader_aug, aug_iterator, optimizer, epoch, warmup, threshold)
 
         # save checkpoint
         if epoch <= 10:

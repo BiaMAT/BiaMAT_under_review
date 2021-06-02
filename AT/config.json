@@ -4,7 +4,7 @@
 
   "_comment": "===== DATASET CONFIGURATION =====",
   "data_path": "cifar-10-batches-py",
-  "data_path_aux": "Imagenet32_train",
+  "data_path_imagenet": "Imagenet32_train",
 
   "_comment": "===== TRAINING CONFIGURATION =====",
   "tf_random_seed": 451760341,

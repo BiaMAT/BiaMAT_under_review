@@ -27,7 +27,7 @@ parser.add_argument('--num-steps', type=int, default=100,
 parser.add_argument('--step-size', default=0.003,
                     help='perturb step size')
 parser.add_argument('--random', action='store_true')
-parser.add_argument('--data-path', default='data',
+parser.add_argument('--data-dir', type=str, default='data',
                     help='data for white-box attack evaluation')
 parser.add_argument('--model-path',
                     help='model for white-box attack evaluation')
@@ -54,7 +54,7 @@ kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
 
 # set up data loader
 transform_test = transforms.Compose([transforms.ToTensor(),])
-testset = torchvision.datasets.CIFAR10(root=args.data_path, train=False, download=True, transform=transform_test)
+testset = torchvision.datasets.CIFAR10(root=args.data_dir, train=False, download=True, transform=transform_test)
 test_loader = torch.utils.data.DataLoader(testset, batch_size=args.test_batch_size, shuffle=False, **kwargs)
 
 def one_hot_tensor(y_batch_tensor, num_classes=10):

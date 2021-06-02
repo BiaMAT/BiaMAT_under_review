@@ -12,7 +12,7 @@ version = sys.version_info
 import numpy as np
 
 class ImageNetData(object):
-    def __init__(self, path, shuffle=False):
+    def __init__(self, path):
         train_filenames = ['train_data_batch_{}'.format(ii + 1) for ii in range(10)]
         x_list = []
         y_list = []
@@ -22,8 +22,6 @@ class ImageNetData(object):
             y_list.append(cur_labels)
         train_images = np.concatenate(x_list, axis=0)
         train_labels = np.concatenate(y_list, axis=0)
-        if shuffle:
-            np.random.shuffle(train_labels)
         self.train_data = DataSubset(train_images, train_labels)
 
     @staticmethod
@@ -36,34 +34,20 @@ class ImageNetData(object):
         d = self.unpickle(data_file)
         x = d['data']
         y = d['labels']
-
         # Labels are indexed from 1, shift it so that indexes start at 0
         y = [i-1 for i in y]
         data_size = x.shape[0]
-
         img_size2 = img_size * img_size
-
         x = np.dstack((x[:, :img_size2], x[:, img_size2:2*img_size2], x[:, 2*img_size2:]))
         x = x.reshape((x.shape[0], img_size, img_size, 3))
         y = np.array(y)
         assert x.dtype == np.uint8
-
         return x, y
 
 
-
 class AugmentedImageNetData(object):
-    """
-    Data augmentation wrapper over a loaded dataset.
-    
-    Inputs to constructor
-    =====================
-        - raw_cifar10data: the loaded CIFAR10 dataset, via the CIFAR10Data class
-        - sess: current tensorflow session
-        - model: current model (needed for input tensor)
-    """
-    def __init__(self, raw_cifar10data, sess, model):
-        assert isinstance(raw_cifar10data, ImageNetData) or isinstance(raw_cifar10data[0], ImageNetData)
+    def __init__(self, raw_imagenetdata, sess, model, subset=False):
+        assert isinstance(raw_imagenetdata, ImageNetData) or isinstance(raw_imagenetdata[0], ImageNetData)
         self.image_size = 32
         # create augmentation computational graph
         self.x_input_placeholder = tf.placeholder(tf.float32, shape=[None, 32, 32, 3])
@@ -75,9 +59,9 @@ class AugmentedImageNetData(object):
                                                              3]), padded)
         flipped = tf.map_fn(lambda img: tf.image.random_flip_left_right(img), cropped)
         self.augmented = flipped
-        self.train_data = AugmentedDataSubset(raw_cifar10data.train_data, sess,
+        self.train_data = AugmentedDataSubset(raw_imagenetdata.train_data, sess,
                                              self.x_input_placeholder,
-                                              self.augmented)
+                                              self.augmented, subset)
 
 class DataSubset(object):
     def __init__(self, xs, ys):
@@ -112,15 +96,25 @@ class DataSubset(object):
 
 
 class AugmentedDataSubset(object):
-    def __init__(self, raw_data, sess, x_input_placeholder, 
-                 augmented):
+    def __init__(self, raw_datasubset, sess, x_input_placeholder, 
+                 augmented, subset):
         self.sess = sess
-        self.raw_data = raw_data
+        self.raw_datasubset = raw_datasubset
         self.x_input_placeholder = x_input_placeholder
         self.augmented = augmented
+        self.subset = subset
 
     def get_next_batch(self, batch_size, multiple_passes=False, reshuffle_after_pass=True):
-        raw_batch = self.raw_data.get_next_batch(batch_size, multiple_passes,
+        if self.subset:
+            raw_batches = [datasubset.get_next_batch(batch_size, multiple_passes,
+                                                           reshuffle_after_pass) for datasubset in self.raw_datasubset]
+            raw_x_batches = [i[0] for i in raw_batches]
+            raw_y_batches = [i[1] for i in raw_batches]
+            raw_batch = []
+            raw_batch.append(np.concatenate(raw_x_batches, axis=0))
+            raw_batch.append(np.concatenate(raw_y_batches, axis=0))
+        else:
+            raw_batch = self.raw_datasubset.get_next_batch(batch_size, multiple_passes,
                                                            reshuffle_after_pass)
         images = raw_batch[0].astype(np.float32)
         return self.sess.run(self.augmented, feed_dict={self.x_input_placeholder:

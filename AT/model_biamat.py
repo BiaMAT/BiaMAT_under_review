@@ -9,10 +9,11 @@ import tensorflow as tf
 class Model(object):
   """ResNet model."""
 
-  def __init__(self, num_classes, n=4):
+  def __init__(self, num_classes, aux_num_classes, n=4):
     """ResNet constructor.
     """
     self.num_classes = num_classes
+    self.aux_num_classes = aux_num_classes
     self.n = n
     self._build_model()
 
@@ -22,7 +23,6 @@ class Model(object):
   def _stride_arr(self, stride):
     """Map a stride scalar to the stride array for tf.nn.conv2d."""
     return (stride, stride)
-    #return [1, stride, stride, 1]
 
   def _build_model(self):
     """Build the core model within the graph."""
@@ -33,22 +33,21 @@ class Model(object):
         shape=[None, 32, 32, 3])
 
       self.y_input = tf.placeholder(tf.float32, shape=[None, self.num_classes])
-      self.scaler = tf.placeholder(tf.float32, shape=None)
+      self.y_input_aux = tf.placeholder(tf.int64, shape=None)
+      self.num_aux_out = tf.placeholder(tf.int64, shape=None)
+      self.num_aux_in = tf.placeholder_with_default(0, shape=None)
       self.is_training = tf.placeholder(tf.bool, shape=None)
-
+      self.scaler = tf.placeholder(tf.float32, shape=None)
 
       input_standardized = tf.map_fn(lambda img: tf.image.per_image_standardization(img),
                                self.x_input)
       input_standardized = tf.transpose(input_standardized, [0, 3, 1, 2])
       x = self._conv('init_conv', input_standardized, 3, 3, 16, self._stride_arr(1))
 
-
-
     strides = [1, 2, 2]
     activate_before_residual = [True, False, False]
     res_func = self._residual
     filters = [16, 160, 320, 640]
-
 
     # Update hps.num_residual_units to 9
 
@@ -79,7 +78,13 @@ class Model(object):
       x = self._global_avg_pool(x)
 
     with tf.variable_scope('logit'):
-      self.pre_softmax = self._fully_connected(x, self.num_classes)
+      x_pri, x_aux = tf.split(x, [-1, self.num_aux_in], axis=0)
+      x_pri = tf.cond(self.is_training, lambda: x_pri, lambda: x)
+      self.pre_softmax = self._fully_connected(x_pri, self.num_classes)
+      self.pre_softmax_aux = self._fully_connected(x_aux, self.aux_num_classes)
+
+    self.softmax = tf.nn.softmax(self.pre_softmax)
+    self.confidence = tf.reduce_max(self.softmax, axis=1)
 
     self.single_label = tf.cast(tf.argmax(self.y_input, axis=1), tf.int64)
     self.predictions = tf.argmax(self.pre_softmax, 1)
@@ -89,15 +94,26 @@ class Model(object):
     self.accuracy = tf.reduce_mean(
         tf.cast(self.correct_prediction, tf.float32))
 
-    self.softmax = tf.nn.softmax(self.pre_softmax)
-    self.confidences = tf.reduce_max(self.softmax, axis=1)
-    self.logit_norms = tf.norm(self.pre_softmax, axis=1)
+    self.predictions_aux = tf.argmax(self.pre_softmax_aux, 1)
+    self.correct_prediction_aux = tf.equal(self.predictions_aux, self.y_input_aux)
+    self.num_correct_aux = tf.reduce_sum(
+        tf.cast(self.correct_prediction_aux, tf.int64))
+    self.accuracy_aux = tf.reduce_mean(
+        tf.cast(self.correct_prediction_aux, tf.float32))
 
     with tf.variable_scope('costs'):
-      self.y_xent_before_scale = tf.nn.softmax_cross_entropy_with_logits(logits=self.pre_softmax, labels=self.y_input)
-      self.y_xent = self.y_xent_before_scale * self.scaler
+      self.y_xent = tf.nn.softmax_cross_entropy_with_logits(
+          logits=self.pre_softmax, labels=self.y_input)
       self.xent = tf.reduce_sum(self.y_xent, name='y_xent')
       self.mean_xent = tf.reduce_mean(self.y_xent)
+
+      self.y_xent_aux = tf.nn.sparse_softmax_cross_entropy_with_logits(
+          logits=self.pre_softmax_aux, labels=self.y_input_aux)
+      xent_pri, xent_aux_out = tf.split(self.y_xent, [-1, self.num_aux_out], axis=0)
+      self.xent_merge = tf.cond(tf.equal(self.num_aux_in, 0), lambda:self.xent, lambda:self.xent + tf.reduce_sum(self.y_xent_aux, name='y_xent_aux'))
+      self.xent_pri = tf.reduce_mean(xent_pri)
+      self.xent_aux = tf.cond(tf.equal(self.num_aux_in, 0), lambda: self.scaler*tf.reduce_mean(xent_aux_out), lambda: self.scaler*tf.reduce_mean(tf.concat([xent_aux_out, self.y_xent_aux], axis=0)))
+      self.mean_xent_merge = self.xent_pri + self.xent_aux
       self.weight_decay_loss = self._decay()
 
   def _batch_norm(self, name, x):

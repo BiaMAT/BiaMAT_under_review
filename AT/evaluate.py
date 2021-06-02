@@ -7,6 +7,7 @@ from __future__ import print_function
 import json
 import math
 import sys
+import os
 
 import numpy as np
 import tensorflow as tf
@@ -20,6 +21,7 @@ num_classes = 10
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model-dir', type=str)
+parser.add_argument('--ckpt', type=int)
 parser.add_argument('--steps', type=int)
 parser.add_argument('--n', type=int)
 args = parser.parse_args()
@@ -34,15 +36,13 @@ np.random.seed(config['np_random_seed'])
 # Setting up training parameters
 model_dir = args.model_dir
 data_path = config['data_path']
-
 num_eval_examples = config['num_eval_examples']
 eval_batch_size = config['eval_batch_size']
 
 # Setting up the data and the model
 raw_cifar = cifar10_input.CIFAR10Data(data_path)
-# raw_aug = tiny_input.CIFAR10Data(data_path_aug)
 global_step = tf.contrib.framework.get_or_create_global_step()
-model = Model(mode='eval', num_classes=num_classes, n=args.n)
+model = Model(num_classes=num_classes, n=args.n)
 
 # Set up adversary
 attack_xent = LinfPGDAttack(model,
@@ -59,7 +59,7 @@ attack_cw = LinfPGDAttack(model,
                        config['random_start'],
                        'cw')
 
-saver = tf.train.Saver(max_to_keep=5)
+saver = tf.train.Saver()
 
 import tqdm
 
@@ -111,17 +111,14 @@ def evaluate(sess):
 
 
 with tf.Session() as sess:
-    # initialize data augmentation
-    # cifar = cifar10_input.AugmentedCIFAR10Data(raw_cifar, sess, model)
-    # aug = tiny_input.AugmentedCIFAR10Data(raw_aug, sess, model)
-
-    # Initialize the summary writer, global variables, and our time counter.
     sess.run(tf.global_variables_initializer())
-
     # restore
-    cur_checkpoint = tf.train.latest_checkpoint(model_dir)
+    if args.ckpt == None:
+        cur_checkpoint = tf.train.latest_checkpoint(model_dir)
+    else:
+        cur_checkpoint = os.path.join(args.model_dir, 'checkpoint-%d'%args.ckpt)
+    print('@'*20)
     print(cur_checkpoint)
     saver.restore(sess, cur_checkpoint)
-
     # evaluate
     evaluate(sess)
