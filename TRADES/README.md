@@ -16,7 +16,7 @@ The implementation is based on the official code of TRADES (https://github.com/y
 To train the BiaMAT model in the paper, run this command:
 
 ```train
-python train_BiaMAT.py --model-dir <name> --data-dir <path to dir containing cifar-10-batches-py> --aux-dataset-dir <path to Imagenet32_train>
+python train_BiaMAT.py --model-dir <name> --primary cifar10 --alpha 0.5 --gamma 0.5 --warmup 5 --data-dir <path to dir containing cifar-10-batches-py> --aux-dataset-dir <path to Imagenet32_train>
 ```
 
 ## Evaluation
@@ -24,5 +24,5 @@ python train_BiaMAT.py --model-dir <name> --data-dir <path to dir containing cif
 To evaluate the model on CIFAR-10, run:
 
 ```eval
-python pgd_attack_cifar10.py --model-path <model path> --num-steps 100 --BiaMAT --random --attack-method <cw or pgd>
+python evaluate.py --model-path <model path> --primary cifar10 --auxiliary imagenet --num-steps 100 --BiaMAT --random --data-dir <path to dir containing cifar-10-batches-py>
 ```
